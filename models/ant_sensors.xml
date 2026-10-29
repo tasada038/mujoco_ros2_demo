@@ -1,0 +1,214 @@
+<!--
+MIT License
+
+Copyright (c) 2026 Takumi Asada
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+
+<mujoco model="ant_sensors">
+  <!--
+    Ant-like quadruped with sensors (no STL, primitives only)
+      - front RGB-D camera on the torso       : <camera name="front_cam">
+      - 2D LiDAR on top of the torso (36 rays) : <rangefinder> x 36 (built with <replicate>)
+      - contact force on each foot             : <touch> + <contact reduce="netforce">
+      - IMU at the torso center                : accelerometer / gyro / framequat
+
+    Legs: 4 legs at 45, 135, 225, 315 deg.
+      hip   joint : rotation about z (swing forward / backward)
+      ankle joint : rotation about a horizontal axis (+ = foot down, - = foot up)
+    The lower legs are built 50 deg downward, so joint angle 0 = standing pose
+    (all sliders at 0 in the viewer -> the robot stands).
+    Actuators are position servos, so the robot holds its pose with ctrl = 0.
+    Move the joints with the Control sliders in the viewer.
+
+    Viewer tips:  F4 = sensor values, Y = show LiDAR rays, F = contact forces,
+                  [ / ] = switch to front_cam
+  -->
+  <compiler angle="degree" autolimits="true"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+
+  <default>
+    <joint type="hinge" damping="1" armature="0.01"/>
+    <geom density="300" friction="1 0.5 0.5"/>
+    <!-- Position servo: ctrl = target angle in RADIANS, ctrlrange = joint range -->
+    <position kp="200" kv="5" inheritrange="1"/>
+    <default class="leg">
+      <geom type="capsule" size="0.04" material="leg"/>
+    </default>
+    <default class="foot">
+      <geom type="capsule" size="0.04" material="foot"/>
+      <!-- touch sensors sum contact normal forces inside this site volume -->
+      <site type="sphere" size="0.07" rgba="1 0.3 0.3 0.3"/>
+    </default>
+    <default class="lidar">
+      <site type="sphere" size="0.005" rgba="0 1 0 1"/>
+    </default>
+  </default>
+
+  <statistic center="0.8 0 0.3" extent="1.5"/>
+  <visual>
+    <headlight ambient=".4 .4 .4"/>
+    <quality shadowsize="0"/>
+    <global azimuth="140" elevation="-25" offwidth="640" offheight="480"/>
+    <!-- Contact force arrows (press F in the viewer): length = force * map.force [m/N] -->
+    <map force="0.01"/>
+    <scale forcewidth="0.03" contactwidth="0.08" contactheight="0.01"/>
+    <rgba rangefinder="0 1 0 0.6" contactforce="1 0.1 0.1 1" contactpoint="1 1 0 1"/>
+  </visual>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512"
+             rgb1=".25 .27 .3" rgb2=".18 .2 .22" mark="edge" markrgb=".6 .6 .6"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"/>
+    <material name="torso" rgba=".2 .5 .8 1"/>
+    <material name="leg" rgba=".8 .6 .3 1"/>
+    <material name="foot" rgba=".9 .4 .2 1"/>
+    <material name="obstacle" rgba=".6 .6 .65 1"/>
+  </asset>
+
+  <worldbody>
+    <light directional="true" pos="0 0 3" dir="0.3 0.2 -1" castshadow="false"/>
+    <geom name="floor" type="plane" size="10 10 0.1" material="grid"/>
+
+    <!-- Obstacles for the camera and the LiDAR (taller than the LiDAR height ~0.63 m) -->
+    <geom name="wall_front" type="box" pos="2.5 0 0.5" size="0.1 1.5 0.5" material="obstacle"/>
+    <geom name="box_left"   type="box" pos="1.2 1.2 0.5" size="0.3 0.3 0.5" rgba=".3 .8 .3 1"/>
+    <geom name="cyl_right"  type="cylinder" pos="1.0 -1.0 0.5" size="0.2 0.5" rgba=".9 .8 .2 1"/>
+    <geom name="pillar_back" type="box" pos="-1.5 0.5 0.5" size="0.2 0.2 0.5" rgba=".8 .3 .3 1"/>
+    <geom name="wall_left"  type="box" pos="0 2.2 0.5" size="1.5 0.1 0.5" material="obstacle"/>
+
+    <body name="torso" pos="0 0 0.55">
+      <freejoint name="root"/>
+      <geom name="torso_geom" type="sphere" size="0.25" mass="3" material="torso"/>
+
+      <!-- IMU -->
+      <site name="imu" pos="0 0 0" size="0.01"/>
+
+      <!-- Front camera: looks along torso +x (a camera looks along its local -z, +y is up) -->
+      <camera name="front_cam" pos="0.26 0 0.05" xyaxes="0 -1 0 0 0 1" fovy="70"/>
+      <geom name="cam_housing" type="box" pos="0.25 0 0.05" size="0.02 0.04 0.03" rgba=".1 .1 .1 1"/>
+
+      <!-- LiDAR on top: 36 rays every 10 deg, horizontal (ray = site +z axis) -->
+      <geom name="lidar_housing" type="cylinder" pos="0 0 0.27" size="0.06 0.03" rgba=".15 .15 .15 1"/>
+      <replicate count="36" euler="0 0 10">
+        <site name="lidar" class="lidar" pos="0 0 0.31" zaxis="1 0 0"/>
+      </replicate>
+
+      <!-- Leg 1: front left (45 deg) -->
+      <body name="leg1" pos="0 0 0">
+        <geom class="leg" fromto="0 0 0 0.2 0.2 0"/>
+        <body name="leg1_hip" pos="0.2 0.2 0">
+          <joint name="hip1" axis="0 0 1" range="-30 30"/>
+          <geom class="leg" fromto="0 0 0 0.2 0.2 0"/>
+          <body name="leg1_foot" pos="0.2 0.2 0">
+            <joint name="ankle1" axis="-1 1 0" range="-40 30"/>
+            <geom name="foot1" class="foot" fromto="0 0 0 0.257 0.257 -0.433"/>
+            <site name="foot1_site" class="foot" pos="0.257 0.257 -0.433"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Leg 2: front right (-45 deg) -->
+      <body name="leg2" pos="0 0 0">
+        <geom class="leg" fromto="0 0 0 0.2 -0.2 0"/>
+        <body name="leg2_hip" pos="0.2 -0.2 0">
+          <joint name="hip2" axis="0 0 1" range="-30 30"/>
+          <geom class="leg" fromto="0 0 0 0.2 -0.2 0"/>
+          <body name="leg2_foot" pos="0.2 -0.2 0">
+            <joint name="ankle2" axis="1 1 0" range="-40 30"/>
+            <geom name="foot2" class="foot" fromto="0 0 0 0.257 -0.257 -0.433"/>
+            <site name="foot2_site" class="foot" pos="0.257 -0.257 -0.433"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Leg 3: back left (135 deg) -->
+      <body name="leg3" pos="0 0 0">
+        <geom class="leg" fromto="0 0 0 -0.2 0.2 0"/>
+        <body name="leg3_hip" pos="-0.2 0.2 0">
+          <joint name="hip3" axis="0 0 1" range="-30 30"/>
+          <geom class="leg" fromto="0 0 0 -0.2 0.2 0"/>
+          <body name="leg3_foot" pos="-0.2 0.2 0">
+            <joint name="ankle3" axis="-1 -1 0" range="-40 30"/>
+            <geom name="foot3" class="foot" fromto="0 0 0 -0.257 0.257 -0.433"/>
+            <site name="foot3_site" class="foot" pos="-0.257 0.257 -0.433"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Leg 4: back right (-135 deg) -->
+      <body name="leg4" pos="0 0 0">
+        <geom class="leg" fromto="0 0 0 -0.2 -0.2 0"/>
+        <body name="leg4_hip" pos="-0.2 -0.2 0">
+          <joint name="hip4" axis="0 0 1" range="-30 30"/>
+          <geom class="leg" fromto="0 0 0 -0.2 -0.2 0"/>
+          <body name="leg4_foot" pos="-0.2 -0.2 0">
+            <joint name="ankle4" axis="1 -1 0" range="-40 30"/>
+            <geom name="foot4" class="foot" fromto="0 0 0 -0.257 -0.257 -0.433"/>
+            <site name="foot4_site" class="foot" pos="-0.257 -0.257 -0.433"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="hip1_act"   joint="hip1"/>
+    <position name="ankle1_act" joint="ankle1"/>
+    <position name="hip2_act"   joint="hip2"/>
+    <position name="ankle2_act" joint="ankle2"/>
+    <position name="hip3_act"   joint="hip3"/>
+    <position name="ankle3_act" joint="ankle3"/>
+    <position name="hip4_act"   joint="hip4"/>
+    <position name="ankle4_act" joint="ankle4"/>
+  </actuator>
+
+  <sensor>
+    <!-- IMU (torso frame) -->
+    <accelerometer name="imu_acc"  site="imu"/>
+    <gyro          name="imu_gyro" site="imu"/>
+    <framequat     name="imu_quat" objtype="site" objname="imu"/>
+
+    <!-- LiDAR: expands to lidar00 ... lidar35, distance in m (-1 = no hit) -->
+    <rangefinder name="lidar" site="lidar"/>
+
+    <!-- Foot contact: touch = normal force inside the foot site [N] -->
+    <touch name="foot1_touch" site="foot1_site"/>
+    <touch name="foot2_touch" site="foot2_site"/>
+    <touch name="foot3_touch" site="foot3_site"/>
+    <touch name="foot4_touch" site="foot4_site"/>
+
+    <!-- Foot contact: number of contacts + total contact force vector [N] (world frame) -->
+    <contact name="foot1_contact" geom1="foot1" data="found force" reduce="netforce"/>
+    <contact name="foot2_contact" geom1="foot2" data="found force" reduce="netforce"/>
+    <contact name="foot3_contact" geom1="foot3" data="found force" reduce="netforce"/>
+    <contact name="foot4_contact" geom1="foot4" data="found force" reduce="netforce"/>
+
+    <!-- Joint states: angle [rad] and angular velocity [rad/s] -->
+    <jointpos name="hip1_pos"   joint="hip1"/>   <jointvel name="hip1_vel"   joint="hip1"/>
+    <jointpos name="ankle1_pos" joint="ankle1"/> <jointvel name="ankle1_vel" joint="ankle1"/>
+    <jointpos name="hip2_pos"   joint="hip2"/>   <jointvel name="hip2_vel"   joint="hip2"/>
+    <jointpos name="ankle2_pos" joint="ankle2"/> <jointvel name="ankle2_vel" joint="ankle2"/>
+    <jointpos name="hip3_pos"   joint="hip3"/>   <jointvel name="hip3_vel"   joint="hip3"/>
+    <jointpos name="ankle3_pos" joint="ankle3"/> <jointvel name="ankle3_vel" joint="ankle3"/>
+    <jointpos name="hip4_pos"   joint="hip4"/>   <jointvel name="hip4_vel"   joint="hip4"/>
+    <jointpos name="ankle4_pos" joint="ankle4"/> <jointvel name="ankle4_vel" joint="ankle4"/>
+  </sensor>
+</mujoco>
